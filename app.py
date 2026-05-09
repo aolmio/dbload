@@ -5,67 +5,48 @@ import plotly.express as px
 import os
 import tempfile
 
-# --- 1. PWA & THEME ENGINE CONFIG ---
-# This must be the first Streamlit command
+# --- PWA & THEME CONFIG ---
 st.set_page_config(page_title="Gold Inventory Pro", layout="wide", initial_sidebar_state="expanded")
 
-# Initialize Theme in Session State
-if 'theme' not in st.session_state:
-    st.session_state.theme = 'Dark'
-
-# Sidebar Theme Toggle
-with st.sidebar:
-    st.title("📱 App Settings")
-    theme_choice = st.radio("Appearance Mode", ["Light", "Dark"], 
-                            index=1 if st.session_state.theme == "Dark" else 0)
-    st.session_state.theme = theme_choice
-    st.divider()
-
-# Define Theme Colors
-if st.session_state.theme == "Dark":
-    bg_color = "#0E1117"
-    text_color = "#FAFAFA"
-    card_bg = "#262730"
-    accent = "#FFB700"
-    chart_theme = "plotly_dark"
-else:
-    bg_color = "#FFFFFF"
-    text_color = "#31333F"
-    card_bg = "#F0F2F6"
-    accent = "#FF4B4B"
-    chart_theme = "plotly_white"
-
-# Inject Custom CSS for Mobile PWA and Themes
-st.markdown(f"""
+# Injecting Meta Tags for PWA (Mobile Home Screen support)
+st.markdown("""
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
     <style>
-    /* PWA Full Screen Fix */
-    .stApp {{
-        background-color: {bg_color};
-        color: {text_color};
-    }}
-    /* Responsive Metric Font Sizes for Mobile */
-    [data-testid="stMetricValue"] {{
-        font-size: 1.5rem !important;
-        color: {accent};
-    }}
-    /* Mobile-friendly table font */
-    .stDataFrame {{
-        font-size: 12px;
-    }}
-    /* Style sidebar */
-    [data-testid="stSidebar"] {{
-        background-color: {card_bg};
-    }}
-    /* Custom button styling */
-    .stButton>button {{
-        width: 100%;
-        border-radius: 10px;
-    }}
+    [data-testid="stMetricValue"] { font-size: 1.8rem; }
+    .main { background-color: transparent; }
+    @media (max-width: 600px) {
+        [data-testid="stMetricValue"] { font-size: 1.2rem; }
+        .stDataFrame { font-size: 12px; }
+    }
     </style>
     """, unsafe_allow_html=True)
 
-# --- 2. HELPER FUNCTIONS ---
+# --- THEME TOGGLE LOGIC ---
+if 'theme' not in st.session_state:
+    st.session_state.theme = 'Dark'
+
+with st.sidebar:
+    st.title("Settings")
+    theme_choice = st.radio("Appearance", ["Light", "Dark"], index=1 if st.session_state.theme == "Dark" else 0)
+    st.session_state.theme = theme_choice
+
+# Apply Theme colors to UI and Charts
+if st.session_state.theme == "Dark":
+    chart_template = "plotly_dark"
+    bg_css = "#0E1117"
+    txt_css = "#FAFAFA"
+else:
+    chart_template = "plotly_white"
+    bg_css = "#FFFFFF"
+    txt_css = "#31333F"
+
+st.markdown(f"<style>.stApp {{ background-color: {bg_css}; color: {txt_css}; }}</style>", unsafe_allow_html=True)
+
+# --- HELPER FUNCTIONS (EXACT FROM ORIGINAL) ---
 def format_burmese_weight(k, p, y):
+    """Combines K/P/Y into a single readable Burmese string."""
     parts = []
     if k > 0: parts.append(f"{int(k)} ကျပ်")
     if p > 0: parts.append(f"{int(p)} ပဲ")
@@ -73,9 +54,11 @@ def format_burmese_weight(k, p, y):
     return " ".join(parts) if parts else "0"
 
 def get_normalized_totals(df_subset):
+    """Calculates normalized K/P/Y for the dashboard."""
     tk = df_subset['Net_Kyat'].sum()
     tp = df_subset['Net_Pe'].sum()
     ty = df_subset['Net_Yway'].sum()
+    
     extra_p = ty // 8
     final_y = round(ty % 8, 2)
     tp += extra_p
@@ -112,16 +95,11 @@ def load_data(db_path):
     df['Sale Profit (Total)'] = df.apply(lambda row: format_burmese_weight(row['sale_wage_profit_kyat'], row['sale_wage_profit_pe'], row['sale_wage_profit_ywe']), axis=1)
     return df
 
-# --- 3. MAIN APP INTERFACE ---
-st.title("💍 Gold Pro Mobile")
+# --- MAIN APP LOGIC ---
+st.title("💍 Gold Inventory PWA")
 
-# MOBILE FIX: We use accept_multiple_files=False and a more generic type 
-# to ensure mobile file pickers don't grey out the database file.
-uploaded_file = st.file_uploader(
-    "Select Gold Database (.db)", 
-    type=["db", "sqlite", "sqlite3"], 
-    help="On mobile, look in your 'Files' or 'Downloads' folder."
-)
+# FIXED: Removed 'type="db"' to allow all file selection on mobile browsers
+uploaded_file = st.file_uploader("Upload Gold Database file", type=None)
 
 if uploaded_file is not None:
     with tempfile.NamedTemporaryFile(delete=False, suffix=".db") as tmp_file:
@@ -131,53 +109,66 @@ if uploaded_file is not None:
     try:
         df = load_data(tmp_path)
         
-        # Search (Sticky top-like behavior)
-        search_term = st.text_input("🔍 Search Item or Goldsmith:", placeholder="Type here...")
-        
+        search_term = st.text_input("🔍 Search Inventory:", placeholder="Ring, Necklace...")
         mask = df.apply(lambda row: search_term.lower() in str(row.get('search_text', '')).lower() or 
                                     search_term.lower() in str(row.get('item_code', '')).lower() or 
                                     search_term.lower() in str(row.get('goldsmith_id', '')).lower(), axis=1)
         f_df = df[mask]
 
-        # Mobile Metrics (2 columns for readability on small screens)
+        st.write("---")
         tk, tp, ty = get_normalized_totals(f_df)
-        col1, col2 = st.columns(2)
-        with col1:
-            st.metric("Total Items", len(f_df))
-            st.metric("Total Grams", f"{f_df['weight_gram'].sum():.2f}g")
-        with col2:
-            st.metric("Stock Qty", int(f_df['qty_on_hand'].sum()))
-            st.metric("BMS Weight", f"{tk}K {tp}P {ty}Y")
+        
+        m1, m2 = st.columns(2)
+        m1.metric("In-Stock (Qty)", int(f_df['qty_on_hand'].sum()))
+        m1.metric("Total Grams", f"{f_df['weight_gram'].sum():.3f} g")
+        m2.metric("Net Weight", f"{tk} ကျပ် {tp} ပဲ {ty} ရွေး")
+        m2.metric("Unique Items", len(f_df))
 
-        # Charts with Theme Integration
-        show_charts = st.sidebar.checkbox("Show Visual Charts", value=True)
+        show_charts = st.checkbox("Show Analysis", value=False)
         if show_charts and not f_df.empty:
-            st.write("---")
-            # Using the chart_theme variable defined in Step 1
-            fig_cat = px.bar(f_df.groupby('category')['qty_on_hand'].sum().reset_index(), 
-                             x='category', y='qty_on_hand', 
-                             template=chart_theme, color_discrete_sequence=[accent])
-            st.plotly_chart(fig_cat, use_container_width=True)
+            c1, c2 = st.columns(2)
+            with c1:
+                fig_cat = px.bar(f_df.groupby('category')['qty_on_hand'].sum().reset_index(), 
+                                 x='category', y='qty_on_hand', title="Qty by Category", template=chart_template)
+                st.plotly_chart(fig_cat, use_container_width=True)
+            with c2:
+                fig_pie = px.pie(f_df, values='weight_gram', names='category', title="Weight Distribution", 
+                                 hole=0.4, template=chart_template)
+                st.plotly_chart(fig_pie, use_container_width=True)
 
-        # Inventory List
         st.subheader("📋 Product List")
-        display_cols = ['item_code', 'item_name', 'qty_on_hand', 'Net Weight (Total)', 'status']
-        st.dataframe(f_df[display_cols], use_container_width=True)
+        display_cols = ['item_code', 'item_name', 'qty_on_hand', 'Net Weight (Total)', 'weight_gram', 'Smith Wage (Total)', 'Sale Profit (Total)', 'status']
 
-        # Detailed Lookup
+        # ORIGINAL COLOR HIGHLIGHTING
+        def highlight_text(val):
+            if 'Smith' in str(val.name): return 'color: #FFB700; font-weight: bold;'
+            if 'Sale' in str(val.name): return 'color: #00E676; font-weight: bold;'
+            return ''
+
+        st.dataframe(
+            f_df[display_cols].style.apply(lambda x: [highlight_text(x) for _ in x], axis=0),
+            use_container_width=True, height=400
+        )
+
         st.divider()
-        selected_id = st.selectbox("Quick Detail Lookup:", options=df['item_code'].unique(), index=None)
+        st.subheader("🔍 Item Deep Dive")
+        selected_id = st.selectbox("Select Item Code:", options=df['item_code'].unique(), index=None, placeholder="Type item code...")
         
         if selected_id:
             detail = df[df['item_code'] == selected_id].iloc[0]
-            with st.expander("💎 Item Specifications", expanded=True):
-                st.write(f"**Name:** {detail.get('item_name')}")
-                st.write(f"**Goldsmith:** {detail.get('goldsmith_id')}")
-                st.write(f"**Status:** {detail.get('status')}")
-                st.write(f"**Weight:** {detail.get('Net Weight (Total)')}")
+            d1, d2, d3 = st.columns(3)
+            with d1:
+                st.info(f"**Goldsmith:** {detail.get('goldsmith_id', 'N/A')}")
+                st.write(f"**Item Name:** {detail.get('item_name', 'N/A')}")
+            with d2:
+                st.info(f"**Status:** {detail.get('status', 'N/A')}")
+                st.write(f"**Purity:** {detail.get('purity', 'N/A')}")
+            with d3:
+                st.info(f"**Location:** {detail.get('location', 'N/A')}")
+                st.write(f"**Date:** {detail.get('listed_date', 'N/A')}")
 
     finally:
         if os.path.exists(tmp_path):
             os.remove(tmp_path)
 else:
-    st.info("👋 Ready to work. Please upload your database file to view stock.")
+    st.info("👋 Please upload your database file to start.")
