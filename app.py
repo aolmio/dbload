@@ -4,58 +4,67 @@ import sqlite3
 import plotly.express as px
 import os
 import tempfile
-from streamlit.components.v1 import html
 
-# --- PWA & THEME CONFIG ---
-st.set_page_config(page_title="Gold Pro PWA", layout="wide", initial_sidebar_state="expanded")
+# --- 1. PWA & THEME ENGINE CONFIG ---
+# This must be the first Streamlit command
+st.set_page_config(page_title="Gold Inventory Pro", layout="wide", initial_sidebar_state="expanded")
 
-# 1. PWA Meta Tags for "Add to Home Screen"
-pwa_meta = """
-    <meta name="apple-mobile-web-app-capable" content="yes">
-    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-    <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
-    <link rel="manifest" href="manifest.json">
-"""
-st.markdown(pwa_meta, unsafe_allow_html=True)
-
-# 2. Theme Toggle Logic
+# Initialize Theme in Session State
 if 'theme' not in st.session_state:
     st.session_state.theme = 'Dark'
 
+# Sidebar Theme Toggle
 with st.sidebar:
-    st.title("Settings")
-    theme_choice = st.radio("Appearance", ["Light", "Dark"], index=1 if st.session_state.theme == "Dark" else 0)
+    st.title("📱 App Settings")
+    theme_choice = st.radio("Appearance Mode", ["Light", "Dark"], 
+                            index=1 if st.session_state.theme == "Dark" else 0)
     st.session_state.theme = theme_choice
+    st.divider()
 
-# 3. Dynamic CSS based on Theme
+# Define Theme Colors
 if st.session_state.theme == "Dark":
-    bg_col = "#0E1117"
-    txt_col = "#FAFAFA"
+    bg_color = "#0E1117"
+    text_color = "#FAFAFA"
     card_bg = "#262730"
     accent = "#FFB700"
-    chart_template = "plotly_dark"
+    chart_theme = "plotly_dark"
 else:
-    bg_col = "#FFFFFF"
-    txt_col = "#31333F"
+    bg_color = "#FFFFFF"
+    text_color = "#31333F"
     card_bg = "#F0F2F6"
     accent = "#FF4B4B"
-    chart_template = "plotly_white"
+    chart_theme = "plotly_white"
 
+# Inject Custom CSS for Mobile PWA and Themes
 st.markdown(f"""
     <style>
-    .stApp {{ background-color: {bg_col}; color: {txt_col}; }}
-    [data-testid="stMetricValue"] {{ font-size: 1.6rem; color: {accent}; }}
-    [data-testid="stSidebar"] {{ background-color: {card_bg}; }}
-    .main {{ background-color: transparent; }}
-    /* Mobile optimization */
-    @media (max-width: 600px) {{
-        [data-testid="stMetricValue"] {{ font-size: 1.1rem; }}
-        .stDataFrame {{ font-size: 12px; }}
+    /* PWA Full Screen Fix */
+    .stApp {{
+        background-color: {bg_color};
+        color: {text_color};
+    }}
+    /* Responsive Metric Font Sizes for Mobile */
+    [data-testid="stMetricValue"] {{
+        font-size: 1.5rem !important;
+        color: {accent};
+    }}
+    /* Mobile-friendly table font */
+    .stDataFrame {{
+        font-size: 12px;
+    }}
+    /* Style sidebar */
+    [data-testid="stSidebar"] {{
+        background-color: {card_bg};
+    }}
+    /* Custom button styling */
+    .stButton>button {{
+        width: 100%;
+        border-radius: 10px;
     }}
     </style>
     """, unsafe_allow_html=True)
 
-# --- HELPER FUNCTIONS (RETAINED) ---
+# --- 2. HELPER FUNCTIONS ---
 def format_burmese_weight(k, p, y):
     parts = []
     if k > 0: parts.append(f"{int(k)} ကျပ်")
@@ -103,10 +112,16 @@ def load_data(db_path):
     df['Sale Profit (Total)'] = df.apply(lambda row: format_burmese_weight(row['sale_wage_profit_kyat'], row['sale_wage_profit_pe'], row['sale_wage_profit_ywe']), axis=1)
     return df
 
-# --- MAIN APP LOGIC ---
-st.title("💍 Gold Inventory Pro")
+# --- 3. MAIN APP INTERFACE ---
+st.title("💍 Gold Pro Mobile")
 
-uploaded_file = st.file_uploader("Upload Gold Database (.db)", type="db")
+# MOBILE FIX: We use accept_multiple_files=False and a more generic type 
+# to ensure mobile file pickers don't grey out the database file.
+uploaded_file = st.file_uploader(
+    "Select Gold Database (.db)", 
+    type=["db", "sqlite", "sqlite3"], 
+    help="On mobile, look in your 'Files' or 'Downloads' folder."
+)
 
 if uploaded_file is not None:
     with tempfile.NamedTemporaryFile(delete=False, suffix=".db") as tmp_file:
@@ -116,58 +131,53 @@ if uploaded_file is not None:
     try:
         df = load_data(tmp_path)
         
-        # Search Bar
-        search_term = st.text_input("🔍 Search Inventory:", placeholder="Ring, Necklace, Goldsmith ID...")
+        # Search (Sticky top-like behavior)
+        search_term = st.text_input("🔍 Search Item or Goldsmith:", placeholder="Type here...")
+        
         mask = df.apply(lambda row: search_term.lower() in str(row.get('search_text', '')).lower() or 
                                     search_term.lower() in str(row.get('item_code', '')).lower() or 
                                     search_term.lower() in str(row.get('goldsmith_id', '')).lower(), axis=1)
         f_df = df[mask]
 
-        # Dashboard Metrics
+        # Mobile Metrics (2 columns for readability on small screens)
         tk, tp, ty = get_normalized_totals(f_df)
-        m1, m2 = st.columns(2)
-        with m1:
-            st.metric("In-Stock Qty", int(f_df['qty_on_hand'].sum()))
+        col1, col2 = st.columns(2)
+        with col1:
+            st.metric("Total Items", len(f_df))
             st.metric("Total Grams", f"{f_df['weight_gram'].sum():.2f}g")
-        with m2:
-            st.metric("Total Weight (BMS)", f"{tk}K {tp}P {ty}Y")
-            st.metric("Unique Items", len(f_df))
+        with col2:
+            st.metric("Stock Qty", int(f_df['qty_on_hand'].sum()))
+            st.metric("BMS Weight", f"{tk}K {tp}P {ty}Y")
 
-        # Infographics with Theme Support
-        show_charts = st.checkbox("Show Analysis", value=True)
+        # Charts with Theme Integration
+        show_charts = st.sidebar.checkbox("Show Visual Charts", value=True)
         if show_charts and not f_df.empty:
-            c1, c2 = st.columns(2)
-            with c1:
-                fig_cat = px.bar(f_df.groupby('category')['qty_on_hand'].sum().reset_index(), 
-                                 x='category', y='qty_on_hand', title="Qty by Category",
-                                 template=chart_template)
-                st.plotly_chart(fig_cat, use_container_width=True)
-            with c2:
-                fig_pie = px.pie(f_df, values='weight_gram', names='category', title="Weight Distribution", 
-                                 hole=0.4, template=chart_template)
-                st.plotly_chart(fig_pie, use_container_width=True)
+            st.write("---")
+            # Using the chart_theme variable defined in Step 1
+            fig_cat = px.bar(f_df.groupby('category')['qty_on_hand'].sum().reset_index(), 
+                             x='category', y='qty_on_hand', 
+                             template=chart_theme, color_discrete_sequence=[accent])
+            st.plotly_chart(fig_cat, use_container_width=True)
 
-        # Inventory Table
-        st.subheader("📋 Inventory")
-        display_cols = ['item_code', 'item_name', 'qty_on_hand', 'Net Weight (Total)', 'weight_gram', 'status']
-        st.dataframe(f_df[display_cols], use_container_width=True, height=350)
+        # Inventory List
+        st.subheader("📋 Product List")
+        display_cols = ['item_code', 'item_name', 'qty_on_hand', 'Net Weight (Total)', 'status']
+        st.dataframe(f_df[display_cols], use_container_width=True)
 
-        # Item Deep Dive
+        # Detailed Lookup
         st.divider()
-        selected_id = st.selectbox("Quick Look (Item Code):", options=df['item_code'].unique(), index=None)
+        selected_id = st.selectbox("Quick Detail Lookup:", options=df['item_code'].unique(), index=None)
         
         if selected_id:
             detail = df[df['item_code'] == selected_id].iloc[0]
-            with st.container():
-                st.markdown(f"### {detail['item_name']} (`{detail['item_code']}`)")
-                col_a, col_b = st.columns(2)
-                col_a.write(f"**Goldsmith:** {detail.get('goldsmith_id', 'N/A')}")
-                col_a.write(f"**Status:** {detail.get('status', 'N/A')}")
-                col_b.write(f"**Purity:** {detail.get('purity', 'N/A')}")
-                col_b.write(f"**Listed:** {detail.get('listed_date', 'N/A')}")
+            with st.expander("💎 Item Specifications", expanded=True):
+                st.write(f"**Name:** {detail.get('item_name')}")
+                st.write(f"**Goldsmith:** {detail.get('goldsmith_id')}")
+                st.write(f"**Status:** {detail.get('status')}")
+                st.write(f"**Weight:** {detail.get('Net Weight (Total)')}")
 
     finally:
         if os.path.exists(tmp_path):
             os.remove(tmp_path)
 else:
-    st.info("👋 Please upload your database to begin.")
+    st.info("👋 Ready to work. Please upload your database file to view stock.")
